@@ -105,7 +105,7 @@ export function createV1ReplTransport(
  * 和 worker role（environment_auth.py:856），而 OAuth token 两者都没有。
  * 这与故意使用 OAuth 的 v1 replBridge 路径正好相反。
  * 当 poll loop 重新分发 work 时，JWT 会刷新，调用方会再用新的 token 调一次
- * createV2ReplTransport。
+ * 工厂函数 createV2ReplTransport。
  *
  * 注册发生在这里，而不是调用方中，因此整个 v2 握手是单个异步步骤。
  * registerWorker 的失败会向上传播，replBridge 会捕获它并继续留在 poll loop 中。
@@ -192,17 +192,17 @@ export async function createV2ReplTransport(opts: {
     getAuthHeaders,
     heartbeatIntervalMs: opts.heartbeatIntervalMs,
     heartbeatJitterFraction: opts.heartbeatJitterFraction,
-    // Default is process.exit(1) — correct for spawn-mode children. In-process,
-    // that kills the REPL. Close instead: replBridge's onClose wakes the poll
-    // loop, which picks up the server's re-dispatch (with fresh epoch).
+    // 默认实现是 process.exit(1)，这对 spawn 模式子进程是正确的。
+    // 但在同进程场景下它会直接杀掉 REPL，因此这里改为 close：
+    // replBridge 的 onClose 会唤醒 poll loop，再接住服务端重新分发的 work。
     onEpochMismatch: () => {
       logForDebugging(
         '[bridge:repl] CCR v2: epoch superseded (409) — closing for poll-loop recovery',
       )
-      // Close resources in a try block so the throw always executes.
-      // If ccr.close() or sse.close() throw, we still need to unwind
-      // the caller (request()) — otherwise handleEpochMismatch's `never`
-      // return type is violated at runtime and control falls through.
+      // 把资源关闭放进 try 块，确保后面的 throw 一定会执行。
+      // 即便 ccr.close() 或 sse.close() 抛错，也必须继续向上 unwind
+      // 调用方（request()）；否则 handleEpochMismatch 的 `never` 返回约束
+      // 会在运行时被破坏，控制流会错误地继续向后落下。
       try {
         ccr.close()
         sse.close()
@@ -213,9 +213,9 @@ export async function createV2ReplTransport(opts: {
           { level: 'error' },
         )
       }
-      // Don't return — the calling request() code continues after the 409
-      // branch, so callers see the logged warning and a false return. We
-      // throw to unwind; the uploaders catch it as a send failure.
+      // 这里不能 return。request() 在 409 分支后还会继续执行，
+      // 调用方会看到日志里的 warning 与 false 返回值。
+      // 因此必须 throw 以强制 unwind，上传路径会把它当成 send failure 捕获。
       throw new Error('epoch superseded')
     },
   })

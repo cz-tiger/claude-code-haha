@@ -76,7 +76,7 @@ export function sameSessionId(a: string, b: string): boolean {
  * 基于 API base URL 和 session ID 构造 CCR v2 session URL。
  * 与 buildSdkUrl 不同，它返回的是 HTTP(S) URL（不是 ws://），并指向
  * /v1/code/sessions/{id}；子 CC 会基于此 URL 推导 SSE stream 路径和
- * worker endpoints。
+ * worker endpoints 等地址。
  */
 export function buildCCRv2SdkUrl(
   apiBaseUrl: string,

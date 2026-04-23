@@ -388,7 +388,7 @@ export function createSessionSpawner(deps: SessionSpawnerDeps): SessionSpawner {
             deps.onDebug,
           )
           for (const activity of extracted) {
-            // Maintain ring buffer
+            // 维护环形缓冲区。
             if (activities.length >= MAX_ACTIVITIES) {
               activities.shift()
             }

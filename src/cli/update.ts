@@ -157,7 +157,7 @@ export async function update() {
     } else {
       // pacman、deb 和 rpm 不提供特定命令，因为它们各自都有
       // 多个前端（pacman: yay/paru/makepkg，deb: apt/apt-get/aptitude/nala，
-      // rpm: dnf/yum/zypper）
+      // rpm 示例前端：dnf/yum/zypper）
       writeToStdout('Claude is managed by a package manager.\n')
       writeToStdout('Please use your package manager to update.\n')
     }

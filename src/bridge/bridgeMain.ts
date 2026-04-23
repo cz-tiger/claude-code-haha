@@ -84,7 +84,7 @@ const SPAWN_SESSIONS_DEFAULT = 32
 
 /**
  * 多 session spawn 模式（--spawn / --capacity / --create-session-in-dir）使用的
- * GrowthBook gate。
+ * 对应的 GrowthBook gate。
  * 它与 tengu_ccr_bridge_multi_environment（每个 host:dir 支持多个 env）配套，
  * 这个 gate 控制的是每个 environment 支持多个 session。
  * rollout 通过 targeting rules 分阶段进行：先给 ants，再逐步开放给外部用户。

@@ -1,8 +1,8 @@
 /**
  * 共享的 bridge 鉴权/URL 解析。把此前散落在十多个文件中的 ant-only
  * CLAUDE_BRIDGE_* 开发覆盖项统一收敛到这里，这些文件包括
- * inboundAttachments、BriefTool/upload、bridgeMain、initReplBridge、
- * remoteBridgeCore、daemon workers、/rename、/remote-control。
+ * 涉及的调用点包括 inboundAttachments、BriefTool/upload、bridgeMain、
+ * 以及 initReplBridge、remoteBridgeCore、daemon workers、/rename、/remote-control 等位置。
  *
  * 分两层：*Override() 返回 ant-only 环境变量（或 undefined）；
  * 非 Override 版本则回退到真实的 OAuth 存储/配置。

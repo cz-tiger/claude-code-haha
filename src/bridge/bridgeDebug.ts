@@ -26,8 +26,8 @@ type BridgeFault = {
     | 'reconnectSession'
     | 'heartbeatWork'
   /** Fatal 错误会走 handleErrorStatus → BridgeFatalError。Transient
-   *  错误则表现为普通 axios rejection（5xx / network）。恢复代码依此区分：
-   *  fatal → teardown，transient → retry/backoff。 */
+   *  错误则表现为普通 axios rejection（5xx / network）。恢复代码会据此区分：
+  *  具体行为是 fatal → teardown，transient → retry/backoff。 */
   kind: 'fatal' | 'transient'
   status: number
   errorType?: string

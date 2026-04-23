@@ -22,7 +22,7 @@ import {
   validateFlags,
 } from '../../utils/shell/readOnlyCommandValidation.js'
 import type { BashTool } from './BashTool.js'
-import { isNormalizedGitCommand } from './bashPermissions.js'
+import { isNormalizedGitCommand } from './commandMatching.js'
 import { bashCommandIsSafe_DEPRECATED } from './bashSecurity.js'
 import {
   COMMAND_OPERATION_TYPE,

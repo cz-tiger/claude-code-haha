@@ -21,7 +21,7 @@ import {
   validatePath,
 } from '../../utils/permissions/pathValidation.js'
 import type { BashTool } from './BashTool.js'
-import { stripSafeWrappers } from './bashPermissions.js'
+import { stripSafeWrappers } from './commandMatching.js'
 import { sedCommandIsAllowedByAllowlist } from './sedValidation.js'
 
 export type PathCommand =
@@ -63,29 +63,29 @@ export type PathCommand =
   | 'md5sum'
 
 /**
- * Checks if an rm/rmdir command targets dangerous paths that should always
- * require explicit user approval, even if allowlist rules exist.
- * This prevents catastrophic data loss from commands like `rm -rf /`.
+ * 检查 rm/rmdir 命令是否命中了始终需要用户显式批准的危险路径，
+ * 即便已经存在 allowlist 规则也不能直接放行。
+ * 这可以避免 `rm -rf /` 之类命令带来的灾难性数据丢失。
  */
 function checkDangerousRemovalPaths(
   command: 'rm' | 'rmdir',
   args: string[],
   cwd: string,
 ): PermissionResult {
-  // Extract paths using the existing path extractor
+  // 使用现有的路径提取器提取路径。
   const extractor = PATH_EXTRACTORS[command]
   const paths = extractor(args)
 
   for (const path of paths) {
-    // Expand tilde and resolve to absolute path
-    // NOTE: We check the path WITHOUT resolving symlinks, because dangerous paths
-    // like /tmp should be caught even though /tmp is a symlink to /private/tmp on macOS
+    // 展开 tilde，并解析为绝对路径。
+    // 注意：这里不会解析符号链接，因为像 /tmp 这样的危险路径即使在 macOS 上
+    // 实际是 /private/tmp 的符号链接，也仍然应该被捕获。
     const cleanPath = expandTilde(path.replace(/^['"]|['"]$/g, ''))
     const absolutePath = isAbsolute(cleanPath)
       ? cleanPath
       : resolve(cwd, cleanPath)
 
-    // Check if this is a dangerous path (using the non-symlink-resolved path)
+    // 检查它是否是危险路径（使用未解析符号链接的原始路径）。
     if (isDangerousRemovalPath(absolutePath)) {
       return {
         behavior: 'ask',
@@ -94,13 +94,13 @@ function checkDangerousRemovalPaths(
           type: 'other',
           reason: `Dangerous ${command} operation on critical path: ${absolutePath}`,
         },
-        // Don't provide suggestions - we don't want to encourage saving dangerous commands
+        // 不提供建议，避免鼓励用户保存这类危险命令。
         suggestions: [],
       }
     }
   }
 
-  // No dangerous paths found
+  // 未发现危险路径。
   return {
     behavior: 'passthrough',
     message: `No dangerous removals detected for ${command} command`,
@@ -108,20 +108,20 @@ function checkDangerousRemovalPaths(
 }
 
 /**
- * SECURITY: Extract positional (non-flag) arguments, correctly handling the
- * POSIX `--` end-of-options delimiter.
+ * 安全性说明：提取位置参数（非 flag），并正确处理 POSIX 的 `--`
+ * 选项结束分隔符。
  *
- * Most commands (rm, cat, touch, etc.) stop parsing options at `--` and treat
- * ALL subsequent arguments as positional, even if they start with `-`. Naive
- * `!arg.startsWith('-')` filtering drops these, causing path validation to be
- * silently skipped for attack payloads like:
+ * 大多数命令（rm、cat、touch 等）在遇到 `--` 后就会停止解析选项，
+ * 并把之后的所有参数都当作位置参数处理，即便它们以 `-` 开头。
+ * 如果天真地使用 `!arg.startsWith('-')` 过滤，这些参数会被错误丢弃，
+ * 从而导致如下攻击载荷悄悄绕过路径校验：
  *
  *   rm -- -/../.claude/settings.local.json
  *
- * Here `-/../.claude/settings.local.json` starts with `-` so the naive filter
- * drops it, validation sees zero paths, returns passthrough, and the file is
- * deleted without a prompt. With `--` handling, the path IS extracted and
- * validated (blocked by isClaudeConfigFilePath / pathInAllowedWorkingPath).
+ * 这里的 `-/../.claude/settings.local.json` 以 `-` 开头，因此 naive filter
+ * 会把它丢掉，校验器看到的路径数为零，结果返回 passthrough，文件就会在
+ * 没有提示的情况下被删除。正确处理 `--` 后，这个路径会被提取并校验，
+ * 从而被 isClaudeConfigFilePath / pathInAllowedWorkingPath 拦住。
  */
 function filterOutFlags(args: string[]): string[] {
   const result: string[] = []
@@ -138,7 +138,7 @@ function filterOutFlags(args: string[]): string[] {
   return result
 }
 
-// Helper: Parse grep/rg style commands (pattern then paths)
+// 辅助函数：解析 grep/rg 风格命令（先 pattern，后 paths）。
 function parsePatternCommand(
   args: string[],
   flagsWithArgs: Set<string>,
@@ -146,8 +146,8 @@ function parsePatternCommand(
 ): string[] {
   const paths: string[] = []
   let patternFound = false
-  // SECURITY: Track `--` end-of-options delimiter. After `--`, all args are
-  // positional regardless of leading `-`. See filterOutFlags() doc comment.
+  // 安全性说明：追踪 `--` 选项结束分隔符。`--` 之后所有参数都应视为
+  // 位置参数，不再关心是否以 `-` 开头。详见 filterOutFlags() 的注释。
   let afterDoubleDash = false
 
   for (let i = 0; i < args.length; i++) {
@@ -161,18 +161,18 @@ function parsePatternCommand(
 
     if (!afterDoubleDash && arg.startsWith('-')) {
       const flag = arg.split('=')[0]
-      // Pattern flags mark that we've found the pattern
+      // 这些 pattern flag 说明我们已经定位到了 pattern。
       if (flag && ['-e', '--regexp', '-f', '--file'].includes(flag)) {
         patternFound = true
       }
-      // Skip next arg if flag needs it
+      // 如果该 flag 需要参数，则跳过下一个参数。
       if (flag && flagsWithArgs.has(flag) && !arg.includes('=')) {
         i++
       }
       continue
     }
 
-    // First non-flag is pattern, rest are paths
+    // 第一个非 flag 参数是 pattern，后面的才是路径。
     if (!patternFound) {
       patternFound = true
       continue
@@ -184,30 +184,29 @@ function parsePatternCommand(
 }
 
 /**
- * Extracts paths from command arguments for different path commands.
- * Each command has specific logic for how it handles paths and flags.
+ * 针对不同的路径类命令，从命令参数中提取路径。
+ * 每种命令对路径和 flag 的处理方式都不一样，因此这里分别定制逻辑。
  */
 export const PATH_EXTRACTORS: Record<
   PathCommand,
   (args: string[]) => string[]
 > = {
-  // cd: special case - all args form one path
+  // cd：特殊情况，所有参数共同组成一个路径。
   cd: args => (args.length === 0 ? [homedir()] : [args.join(' ')]),
 
-  // ls: filter flags, default to current dir
+  // ls：过滤掉 flag，默认返回当前目录。
   ls: args => {
     const paths = filterOutFlags(args)
     return paths.length > 0 ? paths : ['.']
   },
 
-  // find: collect paths until hitting a real flag, also check path-taking flags
-  // SECURITY: `find -- -path` makes `-path` a starting point (not a predicate).
-  // GNU find supports `--` to allow search roots starting with `-`. After `--`,
-  // we conservatively collect all remaining args as paths to validate. This
-  // over-includes predicates like `-name foo`, but find is a read-only op and
-  // predicates resolve to paths within cwd (allowed), so no false blocks for
-  // legitimate use. The over-inclusion ensures attack paths like
-  // `find -- -/../../etc` are caught.
+  // find：在遇到真正的 flag 前持续收集路径，同时也检查那些会接收路径参数的 flag。
+  // 安全性说明：`find -- -path` 会把 `-path` 当成起始搜索路径，而不是 predicate。
+  // GNU find 支持 `--`，用来允许以 `-` 开头的搜索根路径。进入 `--` 之后，
+  // 我们会保守地把剩余所有参数都当成待校验路径。这样会把 `-name foo` 之类
+  // predicate 也一起算进去，但由于 find 是只读操作，而且这些 predicate 最终解析到的
+  // 路径仍在 cwd 范围内，因此不会误拦合法用法。这种“过度包含”是为了确保
+  // `find -- -/../../etc` 之类攻击路径也能被抓住。
   find: args => {
     const paths: string[] = []
     const pathFlags = new Set([
@@ -241,20 +240,20 @@ export const PATH_EXTRACTORS: Record<
         continue
       }
 
-      // Handle flags
+      // 处理 flag。
       if (arg.startsWith('-')) {
-        // Global options don't stop collection
+        // 全局选项不会中断路径收集。
         if (['-H', '-L', '-P'].includes(arg)) continue
 
-        // Mark that we've seen a non-global flag
+        // 标记已经见到了非全局 flag。
         foundNonGlobalFlag = true
 
-        // Check if this flag takes a path argument
+        // 检查这个 flag 是否会接收路径参数。
         if (pathFlags.has(arg) || newerPattern.test(arg)) {
           const nextArg = args[i + 1]
           if (nextArg) {
             paths.push(nextArg)
-            i++ // Skip the path we just processed
+            i++ // 跳过刚刚已经处理过的路径参数。
           }
         }
         continue

@@ -1,6 +1,5 @@
 import { feature } from 'bun:bundle'
 import { APIUserAbortError } from '@anthropic-ai/sdk'
-import type { z } from 'zod/v4'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -53,7 +52,7 @@ import type { PermissionUpdate } from '../../utils/permissions/PermissionUpdateS
 import { permissionRuleValueToString } from '../../utils/permissions/permissionRuleParser.js'
 import {
   createPermissionRequestMessage,
-  getRuleByContentsForTool,
+  getRuleByContentsForToolName,
 } from '../../utils/permissions/permissions.js'
 import {
   parsePermissionRule,
@@ -67,7 +66,7 @@ import { getPlatform } from '../../utils/platform.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { windowsPathToPosixPath } from '../../utils/windowsPaths.js'
-import { BashTool } from './BashTool.js'
+import type { BashToolInput } from './BashTool.js'
 import { checkCommandOperatorPermissions } from './bashCommandHelpers.js'
 import {
   bashCommandIsSafeAsync_DEPRECATED,
@@ -75,44 +74,45 @@ import {
 } from './bashSecurity.js'
 import { checkPermissionMode } from './modeValidation.js'
 import { checkPathConstraints } from './pathValidation.js'
+import { checkReadOnlyConstraints } from './readOnlyValidation.js'
 import { checkSedConstraints } from './sedValidation.js'
 import { shouldUseSandbox } from './shouldUseSandbox.js'
+import { BASH_TOOL_NAME } from './toolName.js'
 
-// DCE cliff: Bun's feature() evaluator has a per-function complexity budget.
-// bashToolHasPermission is right at the limit. `import { X as Y }` aliases
-// inside the import block count toward this budget; when they push it over
-// the threshold Bun can no longer prove feature('BASH_CLASSIFIER') is a
-// constant and silently evaluates the ternaries to `false`, dropping every
-// pendingClassifierCheck spread. Keep aliases as top-level const rebindings
-// instead. (See also the comment on checkSemanticsDeny below.)
+// DCE cliff：Bun 的 feature() 求值器对单个函数有复杂度预算限制。
+// bashToolHasPermission 已经非常接近这个上限。`import { X as Y }` 这种别名导入
+// 写法会被计入预算；一旦把复杂度推过阈值，Bun 就无法再证明
+// feature('BASH_CLASSIFIER') 是常量，并会悄悄把相关三元表达式求成 `false`，
+// 导致所有 pendingClassifierCheck spread 都被裁掉。因此别名要改成顶层 const
+// 重新绑定。（另见下方对 checkSemanticsDeny 的注释。）
 const bashCommandIsSafeAsync = bashCommandIsSafeAsync_DEPRECATED
 const splitCommand = splitCommand_DEPRECATED
+const BashTool = { name: BASH_TOOL_NAME } as const
 
-// Env-var assignment prefix (VAR=value). Shared across three while-loops that
-// skip safe env vars before extracting the command name.
+// Env-var 赋值前缀（VAR=value）。供三个 while 循环共享，
+// 用于在提取命令名之前跳过安全的环境变量。
 const ENV_VAR_ASSIGN_RE = /^[A-Za-z_]\w*=/
 
-// CC-643: On complex compound commands, splitCommand_DEPRECATED can produce a
-// very large subcommands array (possible exponential growth; #21405's ReDoS fix
-// may have been incomplete). Each subcommand then runs tree-sitter parse +
-// ~20 validators + logEvent (bashSecurity.ts), and with memoized metadata the
-// resulting microtask chain starves the event loop — REPL freeze at 100% CPU,
-// strace showed /proc/self/stat reads at ~127Hz with no epoll_wait. Fifty is
-// generous: legitimate user commands don't split that wide. Above the cap we
-// fall back to 'ask' (safe default — we can't prove safety, so we prompt).
+// CC-643：对于复杂的复合命令，splitCommand_DEPRECATED 可能生成一个非常大的
+// subcommands 数组（可能存在指数级膨胀；#21405 的 ReDoS 修复可能并不完整）。
+// 随后每个子命令都要跑 tree-sitter 解析、约 20 个 validator 以及 logEvent
+// （见 bashSecurity.ts），在 metadata 被缓存后，最终形成的微任务链会饿死事件循环，
+// 导致 REPL 以 100% CPU 卡死；strace 显示 /proc/self/stat 以约 127Hz 被读取，
+// 却没有 epoll_wait。这里把上限设为 50 已经很宽松，正常用户命令不会拆出这么多段。
+// 超过这个上限就回退到 `ask`（安全默认值，因为我们无法证明它安全，只能请求确认）。
 export const MAX_SUBCOMMANDS_FOR_SECURITY_CHECK = 50
 
-// GH#11380: Cap the number of per-subcommand rules suggested for compound
-// commands. Beyond this, the "Yes, and don't ask again for X, Y, Z…" label
-// degrades to "similar commands" anyway, and saving 10+ rules from one prompt
-// is more likely noise than intent. Users chaining this many write commands
-// in one && list are rare; they can always approve once and add rules manually.
+// GH#11380：为复合命令限制“按子命令建议规则”的数量。
+// 超过这个数量后，界面里的 “Yes, and don't ask again for X, Y, Z…”
+// 也会退化成 “similar commands”，而且一次提示里保存 10 条以上规则通常更像噪音
+// 而不是明确意图。把这么多写命令串在一个 && 列表中的用户本来也很少；
+// 他们完全可以先批准一次，再手动补规则。
 export const MAX_SUGGESTED_RULES_FOR_COMPOUND = 5
 
 /**
- * [ANT-ONLY] Log classifier evaluation results for analysis.
- * This helps us understand which classifier rules are being evaluated
- * and how the classifier is deciding on commands.
+ * [ANT-ONLY] 记录 classifier 的评估结果，供后续分析使用。
+ * 这有助于我们理解哪些 classifier 规则被命中了，以及 classifier
+ * 是如何对命令做出判定的。
  */
 function logClassifierResultForAnts(
   command: string,
@@ -144,13 +144,13 @@ function logClassifierResultForAnts(
 }
 
 /**
- * Extract a stable command prefix (command + subcommand) from a raw command string.
- * Skips leading env var assignments only if they are in SAFE_ENV_VARS (or
- * ANT_ONLY_SAFE_ENV_VARS for ant users). Returns null if a non-safe env var is
- * encountered (to fall back to exact match), or if the second token doesn't look
- * like a subcommand (lowercase alphanumeric, e.g., "commit", "run").
+ * 从原始命令字符串中提取稳定的命令前缀（command + subcommand）。
+ * 只有当开头的 env var 赋值出现在 SAFE_ENV_VARS（ant 用户还包括
+ * ANT_ONLY_SAFE_ENV_VARS）中时，才会跳过这些前缀。如果遇到不安全的 env var，
+ * 就返回 null（从而回退到 exact match）；如果第二个 token 看起来不像子命令
+ * （例如不是小写字母数字形式的 "commit"、"run"），也会返回 null。
  *
- * Examples:
+ * 示例：
  *   'git commit -m "fix typo"' → 'git commit'
  *   'NODE_ENV=prod npm run build' → 'npm run' (NODE_ENV is safe)
  *   'MY_VAR=val npm run build' → null (MY_VAR is not safe)
@@ -162,11 +162,11 @@ export function getSimpleCommandPrefix(command: string): string | null {
   const tokens = command.trim().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
 
-  // Skip env var assignments (VAR=value) at the start, but only if they are
-  // in SAFE_ENV_VARS (or ANT_ONLY_SAFE_ENV_VARS for ant users). If a non-safe
-  // env var is encountered, return null to fall back to exact match. This
-  // prevents generating prefix rules like Bash(npm run:*) that can never match
-  // at allow-rule check time, because stripSafeWrappers only strips safe vars.
+  // 跳过开头的 env var 赋值（VAR=value），但前提是它们位于 SAFE_ENV_VARS
+  // 中（ant 用户还包括 ANT_ONLY_SAFE_ENV_VARS）。如果遇到不安全的 env var，
+  // 就返回 null，回退到 exact match。这样可以避免生成类似 Bash(npm run:*)
+  // 这种永远不可能在 allow-rule 检查时命中的前缀规则，因为 stripSafeWrappers
+  // 只会剥离安全变量。
   let i = 0
   while (i < tokens.length && ENV_VAR_ASSIGN_RE.test(tokens[i]!)) {
     const varName = tokens[i]!.split('=')[0]!
@@ -181,18 +181,18 @@ export function getSimpleCommandPrefix(command: string): string | null {
   const remaining = tokens.slice(i)
   if (remaining.length < 2) return null
   const subcmd = remaining[1]!
-  // Second token must look like a subcommand (e.g., "commit", "run", "compose"),
-  // not a flag (-rf), filename (file.txt), path (/tmp), URL, or number (755).
+  // 第二个 token 必须长得像子命令（例如 "commit"、"run"、"compose"），
+  // 不能是 flag（-rf）、文件名（file.txt）、路径（/tmp）、URL 或数字（755）。
   if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(subcmd)) return null
   return remaining.slice(0, 2).join(' ')
 }
 
-// Bare-prefix suggestions like `bash:*` or `sh:*` would allow arbitrary code
-// via `-c`. Wrapper suggestions like `env:*` or `sudo:*` would do the same:
-// `env` is NOT in SAFE_WRAPPER_PATTERNS, so `env bash -c "evil"` survives
-// stripSafeWrappers unchanged and hits the startsWith("env ") check at
-// the prefix-rule matcher. Shell list mirrors DANGEROUS_SHELL_PREFIXES in
-// src/utils/shell/prefix.ts which guarded the old Haiku extractor.
+// 像 `bash:*`、`sh:*` 这样的裸前缀建议会通过 `-c` 放行任意代码。
+// `env:*`、`sudo:*` 这类 wrapper 前缀建议也会带来同样问题：
+// `env` 不在 SAFE_WRAPPER_PATTERNS 中，因此 `env bash -c "evil"` 不会被
+// stripSafeWrappers 处理掉，并会在前缀规则匹配器中命中 startsWith("env ")。
+// 这里的 shell 列表与 src/utils/shell/prefix.ts 中保护旧 Haiku extractor 的
+// DANGEROUS_SHELL_PREFIXES 保持一致。
 const BARE_SHELL_PREFIXES = new Set([
   'sh',
   'bash',
@@ -205,40 +205,39 @@ const BARE_SHELL_PREFIXES = new Set([
   'cmd',
   'powershell',
   'pwsh',
-  // wrappers that exec their args as a command
+  // 会把其参数直接当命令执行的 wrapper。
   'env',
   'xargs',
-  // SECURITY: checkSemantics (ast.ts) strips these wrappers to check the
-  // wrapped command. Suggesting `Bash(nice:*)` would be ≈ `Bash(*)` — users
-  // would add it after a prompt, then `nice rm -rf /` passes semantics while
-  // deny/cd+git gates see 'nice' (SAFE_WRAPPER_PATTERNS below didn't strip
-  // bare `nice` until this fix). Block these from ever being suggested.
+  // 安全性说明：checkSemantics（ast.ts）会先剥掉这些 wrapper，再检查内部命令。
+  // 如果建议用户添加 `Bash(nice:*)`，它几乎等价于 `Bash(*)`。用户一旦保存它，
+  // 后续 `nice rm -rf /` 在语义检查阶段就会被放过，而 deny/cd+git gate 看到的
+  // 却还是 `nice`（在本次修复前，下面的 SAFE_WRAPPER_PATTERNS 也不会剥掉裸 `nice`）。
+  // 因此这些前缀绝不能被建议出来。
   'nice',
   'stdbuf',
   'nohup',
   'timeout',
   'time',
-  // privilege escalation — sudo:* from `sudo -u foo ...` would auto-approve
-  // any future sudo invocation
+  // 提权相关：如果从 `sudo -u foo ...` 建议出 sudo:*，将会自动批准后续任意 sudo 调用。
   'sudo',
   'doas',
   'pkexec',
 ])
 
 /**
- * UI-only fallback: extract the first word alone when getSimpleCommandPrefix
- * declines. In external builds TREE_SITTER_BASH is off, so the async
- * tree-sitter refinement in BashPermissionRequest never fires — without this,
- * pipes and compounds (`python3 file.py 2>&1 | tail -20`) dump into the
- * editable field verbatim.
+ * 仅供 UI 使用的回退逻辑：当 getSimpleCommandPrefix 无法提取前缀时，
+ * 只提取第一个单词。在 external build 中 TREE_SITTER_BASH 是关闭的，
+ * 因此 BashPermissionRequest 里的异步 tree-sitter 精修根本不会触发；
+ * 没有这层回退时，管道和复合命令（例如 `python3 file.py 2>&1 | tail -20`）
+ * 会原样掉进可编辑输入框中。
  *
- * Deliberately not used by suggestionForExactCommand: a backend-suggested
- * `Bash(rm:*)` is too broad to auto-generate, but as an editable starting
- * point it's what users expect (Slack C07VBSHV7EV/p1772670433193449).
+ * 这里故意不被 suggestionForExactCommand 使用：后端建议出的 `Bash(rm:*)`
+ * 作为自动生成规则过于宽泛，但作为可编辑的起始值却符合用户预期
+ * （见 Slack C07VBSHV7EV/p1772670433193449）。
  *
- * Reuses the same SAFE_ENV_VARS gate as getSimpleCommandPrefix — a rule like
- * `Bash(python3:*)` can never match `RUN=/path python3 ...` at check time
- * because stripSafeWrappers won't strip RUN.
+ * 它复用了与 getSimpleCommandPrefix 相同的 SAFE_ENV_VARS gate。
+ * 否则像 `Bash(python3:*)` 这样的规则，在检查阶段永远无法匹配
+ * `RUN=/path python3 ...`，因为 stripSafeWrappers 不会剥掉 RUN。
  */
 export function getFirstWordPrefix(command: string): string | null {
   const tokens = command.trim().split(/\s+/).filter(Boolean)
@@ -776,7 +775,7 @@ export function stripAllLeadingEnvVars(
 }
 
 function filterRulesByContentsMatchingInput(
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   rules: Map<string, PermissionRule>,
   matchMode: 'exact' | 'prefix',
   {
@@ -935,14 +934,14 @@ function filterRulesByContentsMatchingInput(
 }
 
 function matchingRulesForInput(
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   toolPermissionContext: ToolPermissionContext,
   matchMode: 'exact' | 'prefix',
   { skipCompoundCheck = false }: { skipCompoundCheck?: boolean } = {},
 ) {
-  const denyRuleByContents = getRuleByContentsForTool(
+  const denyRuleByContents = getRuleByContentsForToolName(
     toolPermissionContext,
-    BashTool,
+    BASH_TOOL_NAME,
     'deny',
   )
   // SECURITY: Deny/ask rules use aggressive env var stripping so that
@@ -954,9 +953,9 @@ function matchingRulesForInput(
     { stripAllEnvVars: true, skipCompoundCheck: true },
   )
 
-  const askRuleByContents = getRuleByContentsForTool(
+  const askRuleByContents = getRuleByContentsForToolName(
     toolPermissionContext,
-    BashTool,
+    BASH_TOOL_NAME,
     'ask',
   )
   const matchingAskRules = filterRulesByContentsMatchingInput(
@@ -966,9 +965,9 @@ function matchingRulesForInput(
     { stripAllEnvVars: true, skipCompoundCheck: true },
   )
 
-  const allowRuleByContents = getRuleByContentsForTool(
+  const allowRuleByContents = getRuleByContentsForToolName(
     toolPermissionContext,
-    BashTool,
+    BASH_TOOL_NAME,
     'allow',
   )
   const matchingAllowRules = filterRulesByContentsMatchingInput(
@@ -989,7 +988,7 @@ function matchingRulesForInput(
  * Checks if the subcommand is an exact match for a permission rule
  */
 export const bashToolCheckExactMatchPermission = (
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   toolPermissionContext: ToolPermissionContext,
 ): PermissionResult => {
   const command = input.command.trim()
@@ -1048,7 +1047,7 @@ export const bashToolCheckExactMatchPermission = (
 }
 
 export const bashToolCheckPermission = (
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   toolPermissionContext: ToolPermissionContext,
   compoundCommandHasCd?: boolean,
   astCommand?: SimpleCommand,
@@ -1151,7 +1150,12 @@ export const bashToolCheckPermission = (
   }
 
   // 7. Check read-only rules
-  if (BashTool.isReadOnly(input)) {
+  if (
+    checkReadOnlyConstraints(
+      input,
+      compoundCommandHasCd ?? commandHasAnyCd(input.command),
+    ).behavior === 'allow'
+  ) {
     return {
       behavior: 'allow',
       updatedInput: input,
@@ -1181,7 +1185,7 @@ export const bashToolCheckPermission = (
  * Processes an individual subcommand and applies prefix checks & suggestions
  */
 export async function checkCommandAndSuggestRules(
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   toolPermissionContext: ToolPermissionContext,
   commandPrefixResult: CommandPrefixResult | null | undefined,
   compoundCommandHasCd?: boolean,
@@ -1268,7 +1272,7 @@ export async function checkCommandAndSuggestRules(
  *   - passthrough should not occur since we're in auto-allow mode
  */
 function checkSandboxAutoAllow(
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   toolPermissionContext: ToolPermissionContext,
 ): PermissionResult {
   const command = input.command.trim()
@@ -1389,7 +1393,7 @@ function filterCdCwdSubcommands(
  * bashToolHasPermission under Bun's feature() DCE complexity threshold.
  */
 function checkEarlyExitDeny(
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   toolPermissionContext: ToolPermissionContext,
 ): PermissionResult | null {
   const exactMatchResult = bashToolCheckExactMatchPermission(
@@ -1429,7 +1433,7 @@ function checkEarlyExitDeny(
  * feature('BASH_CLASSIFIER') evaluation and drops pendingClassifierCheck.
  */
 function checkSemanticsDeny(
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   toolPermissionContext: ToolPermissionContext,
   commands: readonly { text: string }[],
 ): PermissionResult | null {
@@ -1661,7 +1665,7 @@ export async function executeAsyncClassifierCheck(
  * The main implementation to check if we need to ask for user permission to call BashTool with a given input
  */
 export async function bashToolHasPermission(
-  input: z.infer<typeof BashTool.inputSchema>,
+  input: BashToolInput,
   context: ToolUseContext,
   getCommandSubcommandPrefixFn = getCommandSubcommandPrefix,
 ): Promise<PermissionResult> {
@@ -1975,7 +1979,7 @@ export async function bashToolHasPermission(
   // are handled by the operator logic (which generates "multiple operations" messages)
   const commandOperatorResult = await checkCommandOperatorPermissions(
     input,
-    (i: z.infer<typeof BashTool.inputSchema>) =>
+    (i: BashToolInput) =>
       bashToolHasPermission(i, context, getCommandSubcommandPrefixFn),
     { isNormalizedCdCommand, isNormalizedGitCommand },
     astRoot,

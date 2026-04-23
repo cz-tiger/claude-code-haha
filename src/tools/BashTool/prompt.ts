@@ -160,10 +160,10 @@ Important:
 - View comments on a Github PR: gh api repos/foo/bar/pulls/123/comments`
 }
 
-// SandboxManager merges config from multiple sources (settings layers, defaults,
-// CLI flags) without deduping, so paths like ~/.cache appear 3× in allowOnly.
-// Dedup here before inlining into the prompt — affects only what the model sees,
-// not sandbox enforcement. Saves ~150-200 tokens/request when sandbox is enabled.
+// SandboxManager 会把多个来源的配置（settings 层级、默认值、CLI flags）直接合并，
+// 不做去重，因此像 ~/.cache 这样的路径可能会在 allowOnly 中出现 3 次。
+// 这里在把内容内联进 prompt 之前先去重，只影响模型看到的文本，
+// 不影响 sandbox 的实际执行。启用 sandbox 时每次请求大约能省 150-200 个 token。
 function dedup<T>(arr: T[] | undefined): T[] | undefined {
   if (!arr || arr.length === 0) return arr
   return [...new Set(arr)]
@@ -182,9 +182,9 @@ function getSimpleSandboxSection(): string {
   const allowUnsandboxedCommands =
     SandboxManager.areUnsandboxedCommandsAllowed()
 
-  // Replace the per-UID temp dir literal (e.g. /private/tmp/claude-1001/) with
-  // "$TMPDIR" so the prompt is identical across users — avoids busting the
-  // cross-user global prompt cache. The sandbox already sets $TMPDIR at runtime.
+  // 把按 UID 区分的临时目录字面量（例如 /private/tmp/claude-1001/）替换成
+  // "$TMPDIR"，这样不同用户看到的 prompt 就完全一致，避免打爆跨用户共享的
+  // 全局 prompt cache。sandbox 在运行时本来就会设置好 $TMPDIR。
   const claudeTempDir = getClaudeTempDir()
   const normalizeAllowOnly = (paths: string[]): string[] =>
     [...new Set(paths)].map(p => (p === claudeTempDir ? '$TMPDIR' : p))

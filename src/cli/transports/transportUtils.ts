@@ -20,9 +20,9 @@ export function getTransportForUrl(
   refreshHeaders?: () => Record<string, string>,
 ): Transport {
   if (isEnvTruthy(process.env.CLAUDE_CODE_USE_CCR_V2)) {
-    // v2: SSE for reads, HTTP POST for writes
-    // --sdk-url is the session URL (.../sessions/{id});
-    // derive the SSE stream URL by appending /worker/events/stream
+    // v2：读取走 SSE，写入走 HTTP POST
+    // --sdk-url 是 session URL（.../sessions/{id}）；
+    // 通过追加 /worker/events/stream 推导出 SSE stream URL
     const sseUrl = new URL(url.href)
     if (sseUrl.protocol === 'wss:') {
       sseUrl.protocol = 'https:'

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
 // GitHub-compatible slugify (matches github-slugger algorithm)
 // Makes heading anchor IDs consistent between VitePress and GitHub rendering
@@ -23,6 +24,7 @@ const zhSidebar = [
       { text: '第三方模型', link: '/guide/third-party-models' },
       { text: '全局使用', link: '/guide/global-usage' },
       { text: '常见问题', link: '/guide/faq' },
+      { text: '贡献与质量门禁', link: '/guide/contributing' },
     ],
   },
   {
@@ -54,7 +56,18 @@ const zhSidebar = [
     ],
   },
   {
-    text: 'Channel 系统',
+    text: 'IM 接入',
+    collapsed: false,
+    items: [
+      { text: '总览', link: '/im/' },
+      { text: '微信', link: '/im/wechat' },
+      { text: '钉钉', link: '/im/dingtalk' },
+      { text: 'Telegram', link: '/im/telegram' },
+      { text: '飞书', link: '/im/feishu' },
+    ],
+  },
+  {
+    text: 'Channel 源码研究',
     collapsed: false,
     items: [
       { text: '概览', link: '/channel/' },
@@ -67,6 +80,17 @@ const zhSidebar = [
     items: [
       { text: '功能指南', link: '/features/computer-use' },
       { text: '架构解析', link: '/features/computer-use-architecture' },
+    ],
+  },
+  {
+    text: '桌面端',
+    collapsed: false,
+    items: [
+      { text: '概览', link: '/desktop/' },
+      { text: '快速上手', link: '/desktop/01-quick-start' },
+      { text: '架构设计', link: '/desktop/02-architecture' },
+      { text: '功能详解', link: '/desktop/03-features' },
+      { text: '安装与构建', link: '/desktop/04-installation' },
     ],
   },
   {
@@ -88,6 +112,7 @@ const enSidebar = [
       { text: 'Third-Party Models', link: '/en/guide/third-party-models' },
       { text: 'Global Usage', link: '/en/guide/global-usage' },
       { text: 'FAQ', link: '/en/guide/faq' },
+      { text: 'Contributing', link: '/en/guide/contributing' },
     ],
   },
   {
@@ -135,6 +160,17 @@ const enSidebar = [
     ],
   },
   {
+    text: 'Desktop',
+    collapsed: false,
+    items: [
+      { text: 'Overview', link: '/en/desktop/' },
+      { text: 'Quick Start', link: '/en/desktop/01-quick-start' },
+      { text: 'Architecture', link: '/en/desktop/02-architecture' },
+      { text: 'Features', link: '/en/desktop/03-features' },
+      { text: 'Installation & Build', link: '/en/desktop/04-installation' },
+    ],
+  },
+  {
     text: 'Reference',
     collapsed: true,
     items: [
@@ -144,7 +180,7 @@ const enSidebar = [
   },
 ]
 
-export default defineConfig({
+export default withMermaid(defineConfig({
   title: 'Claude Code Haha',
   description: '基于 Claude Code 泄露源码修复的本地可运行版本，支持接入任意 Anthropic 兼容 API',
   lastUpdated: true,
@@ -159,7 +195,6 @@ export default defineConfig({
   head: [
     ['script', { async: '', src: 'https://www.googletagmanager.com/gtag/js?id=G-D42DM82263' }],
     ['script', {}, `window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('js', new Date());\ngtag('config', 'G-D42DM82263');`],
-    ['script', { async: '', src: 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5210914487984731', crossorigin: 'anonymous' }],
   ],
 
   locales: {
@@ -214,4 +249,4 @@ export default defineConfig({
       copyright: 'Copyright 2026 Claude Code Haha Contributors',
     },
   },
-})
+}))

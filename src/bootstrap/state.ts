@@ -1281,6 +1281,22 @@ export type SessionCronTask = {
    * 而不是主 REPL 命令队列。仅当前会话有效，永远不会写盘。
    */
   agentId?: string
+  /** Human-readable task name. */
+  name?: string
+  /** Task description. */
+  description?: string
+  /** Working directory for the task execution. */
+  folder?: string
+  /** Model to use. */
+  model?: string
+  /** Permission mode. */
+  permissionMode?: string
+  /** Whether to use git worktree for execution. */
+  worktree?: boolean
+  /** Schedule frequency for UI display. */
+  frequency?: string
+  /** Time string for scheduled execution. */
+  scheduledTime?: string
 }
 
 export function getSessionCronTasks(): SessionCronTask[] {

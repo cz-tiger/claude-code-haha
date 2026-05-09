@@ -392,7 +392,7 @@ export const SettingsSchema = lazySchema(() =>
         .record(z.string(), z.string())
         .optional()
         .describe(
-          'Override mapping from Anthropic model ID (e.g. "claude-opus-4-6") to provider-specific ' +
+          'Override mapping from Anthropic model ID (e.g. "claude-opus-4-7") to provider-specific ' +
             'model ID (e.g. a Bedrock inference profile ARN). Typically set in managed settings by ' +
             'enterprise administrators.',
         ),
@@ -652,6 +652,25 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Skip the WebFetch blocklist check for enterprise environments with restrictive security policies',
         ),
+      webSearch: z
+        .object({
+          mode: z
+            .enum(['auto', 'anthropic', 'tavily', 'brave', 'disabled'])
+            .optional()
+            .describe(
+              'WebSearch backend selection. auto uses native Claude web search for Claude model names, then Tavily, then Brave.',
+            ),
+          tavilyApiKey: z
+            .string()
+            .optional()
+            .describe('Tavily API key for WebSearch fallback'),
+          braveApiKey: z
+            .string()
+            .optional()
+            .describe('Brave Search API key for WebSearch fallback'),
+        })
+        .optional()
+        .describe('Configures native and external WebSearch backends'),
       sandbox: SandboxSettingsSchema().optional(),
       feedbackSurveyRate: z
         .number()

@@ -1605,7 +1605,7 @@ async function run(): Promise<CommanderCommand> {
     // `type: 'stdio'`. An enterprise-config ant with the GB gate on would
     // otherwise process.exit(1). Chrome has the same latent issue but has
     // shipped without incident; chicago places itself correctly.
-    if (getPlatform() === 'macos' && !getIsNonInteractiveSession()) {
+    if (process.platform === 'darwin' || process.platform === 'win32') {
       try {
         const {
           getChicagoEnabled
@@ -2723,16 +2723,53 @@ async function run(): Promise<CommanderCommand> {
           }));
         }, configs).catch(err => logForDebugging(`[MCP] ${label} connect error: ${err}`));
       };
-      // Await all MCP configs — print mode is often single-turn, so
-      // "late-connecting servers visible next turn" doesn't help. SDK init
-      // message and turn-1 tool list both need configured MCP tools present.
+      const getDesktopMcpStartupTimeoutMs = (): number => {
+        const raw = process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS;
+        if (raw === undefined) return 5_000;
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed < 0) return 5_000;
+        return parsed;
+      };
+      const waitForDesktopMcpStartup = async (promise: Promise<void>, label: string): Promise<void> => {
+        const timeoutMs = getDesktopMcpStartupTimeoutMs();
+        if (timeoutMs === 0) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = await Promise.race([promise.then(() => false), new Promise<boolean>(resolve => {
+          timer = setTimeout(resolve, timeoutMs, true);
+        })]);
+        if (timer) clearTimeout(timer);
+        if (timedOut) {
+          logForDebugging(`[MCP] ${label} servers not ready after ${timeoutMs}ms — proceeding; background connection continues`);
+        }
+      };
+
+      // Await all MCP configs for regular print-mode sessions — they're
+      // often single-turn, so "late-connecting servers visible next turn"
+      // doesn't help. SDK init message and turn-1 tool list should include
+      // configured MCP tools when running plain `claude -p`.
+      //
+      // Desktop/bridge sessions (`--sdk-url`) are different: the user is
+      // waiting on the first visible assistant token, not a fully populated
+      // MCP inventory. Blocking startup on slow or failing MCP servers (for
+      // example a local `chatlog` HTTP endpoint timing out) makes the whole
+      // chat feel frozen before the first word appears. In that mode we still
+      // kick off the connections immediately, but let them settle in the
+      // background so headlessStore picks them up after the session starts.
+      //
       // Zero-server case is free via the early return in connectMcpBatch.
       // Connectors parallelize inside getMcpToolsCommandsAndResources
       // (processBatched with Promise.all). claude.ai is awaited too — its
       // fetch was kicked off early (line ~2558) so only residual time blocks
       // here. --bare skips claude.ai entirely for perf-sensitive scripts.
       profileCheckpoint('before_connectMcp');
-      await connectMcpBatch(regularMcpConfigs, 'regular');
+      const regularMcpConnect = connectMcpBatch(regularMcpConfigs, 'regular');
+      if (sdkUrl) {
+        if (process.env.CC_HAHA_DESKTOP_AWAIT_MCP === '1') {
+          await waitForDesktopMcpStartup(regularMcpConnect, 'regular MCP');
+        }
+      } else {
+        await regularMcpConnect;
+      }
       profileCheckpoint('after_connectMcp');
       // Dedup: suppress plugin MCP servers that duplicate a claude.ai
       // connector (connector wins), then connect claude.ai servers.
@@ -4104,16 +4141,18 @@ async function run(): Promise<CommanderCommand> {
   // claude auth
 
   const auth = program.command('auth').description('Manage authentication').configureHelp(createSortedHelpConfig());
-  auth.command('login').description('Sign in to your Anthropic account').option('--email <email>', 'Pre-populate email address on the login page').option('--sso', 'Force SSO login flow').option('--console', 'Use Anthropic Console (API usage billing) instead of Claude subscription').option('--claudeai', 'Use Claude subscription (default)').action(async ({
+  auth.command('login').description('Sign in to your Anthropic or OpenAI account').option('--email <email>', 'Pre-populate email address on the login page').option('--sso', 'Force SSO login flow').option('--console', 'Use Anthropic Console (API usage billing) instead of Claude subscription').option('--claudeai', 'Use Claude subscription (default)').option('--openai', 'Use OpenAI ChatGPT/Codex OAuth login').action(async ({
     email,
     sso,
     console: useConsole,
-    claudeai
+    claudeai,
+    openai,
   }: {
     email?: string;
     sso?: boolean;
     console?: boolean;
     claudeai?: boolean;
+    openai?: boolean;
   }) => {
     const {
       authLogin
@@ -4122,23 +4161,27 @@ async function run(): Promise<CommanderCommand> {
       email,
       sso,
       console: useConsole,
-      claudeai
+      claudeai,
+      openai,
     });
   });
-  auth.command('status').description('Show authentication status').option('--json', 'Output as JSON (default)').option('--text', 'Output as human-readable text').action(async (opts: {
+  auth.command('status').description('Show authentication status').option('--json', 'Output as JSON (default)').option('--text', 'Output as human-readable text').option('--openai', 'Show OpenAI OAuth status').action(async (opts: {
     json?: boolean;
     text?: boolean;
+    openai?: boolean;
   }) => {
     const {
       authStatus
     } = await import('./cli/handlers/auth.js');
     await authStatus(opts);
   });
-  auth.command('logout').description('Log out from your Anthropic account').action(async () => {
+  auth.command('logout').description('Log out from your Anthropic or OpenAI account').option('--openai', 'Log out from OpenAI OAuth only').action(async (opts: {
+    openai?: boolean;
+  }) => {
     const {
       authLogout
     } = await import('./cli/handlers/auth.js');
-    await authLogout();
+    await authLogout(opts);
   });
 
   /**

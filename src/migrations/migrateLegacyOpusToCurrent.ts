@@ -13,7 +13,7 @@ import {
 /**
  * 将 first-party 用户从显式的 Opus 4.0/4.1 model string 上迁移下来。
  *
- * 对 1P 来说，'opus' 别名已经会解析到 Opus 4.6，因此任何仍在使用显式 4.0/4.1
+ * 对 1P 来说，'opus' 别名已经会解析到 Opus 4.7，因此任何仍在使用显式 4.0/4.1
  * 字符串的用户，都是在 4.5 发布前就在 settings 里把它钉住了。
  * parseUserSpecifiedModel 现在反正也会在运行时静默重映射这些值——
  * 这个迁移的作用是把 settings 文件清理干净，让 /model 显示正确结果，

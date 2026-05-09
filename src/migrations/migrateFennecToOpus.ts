@@ -4,7 +4,7 @@ import {
 } from '../utils/settings/settings.js'
 
 /**
- * 将使用已移除 fennec 模型别名的用户迁移到新的 Opus 4.6 别名。
+ * 将使用已移除 fennec 模型别名的用户迁移到新的 Opus 4.7 别名。
  * - fennec-latest → opus
  * - fennec-latest[1m] → opus[1m]
  * - fennec-fast-latest → opus[1m] + fast mode
